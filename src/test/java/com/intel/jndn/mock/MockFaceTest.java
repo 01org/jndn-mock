@@ -14,6 +14,8 @@
 package com.intel.jndn.mock;
 
 import java.io.IOException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
 import net.named_data.jndn.*;
@@ -57,6 +59,32 @@ public class MockFaceTest {
     assertEquals(isTimeout, false);
     assertEquals(recvData.getName().toString(), "/test/with/responses");
     assertEquals(recvData.getContent().buf(), new Blob("...").buf());
+  }
+
+  @Test
+  public void testExpressingAnInterestLongerThanTheRegisteredPrefix() throws Exception {
+    final CountDownLatch latch = new CountDownLatch(1);
+    Name prefix = new Name("/test/short/prefix");
+    OnInterestCallback callback = new OnInterestCallback() {
+      @Override
+      public void onInterest(Name prefix, Interest interest, Face face, long interestFilterId, InterestFilter filter) {
+        try {
+          face.putData(new Data(interest.getName().append("response")));
+        } catch (IOException e) {
+          fail("Responding with a data packet must succeed");
+        }
+      }
+    };
+
+    registerPrefix(face, prefix, callback, latch);
+    latch.await(2, TimeUnit.SECONDS);
+
+    expressInterest(prefix.append("request").toUri());
+    run(3);
+
+    assertNotNull(recvData);
+    assertEquals(isTimeout, false);
+    assertEquals(prefix.append("request").append("response"), recvData.getName());
   }
 
   @Test
@@ -147,7 +175,7 @@ public class MockFaceTest {
   public void testThatTransportConnectsOnPrefixRegistration() throws IOException, SecurityException {
     assertFalse(face.getTransport().getIsConnected());
     face.registerPrefix(new Name("/fake/prefix"), (OnInterestCallback) null, (OnRegisterFailed) null,
-            (OnRegisterSuccess) null);
+        (OnRegisterSuccess) null);
     assertTrue(face.getTransport().getIsConnected());
   }
 
@@ -202,7 +230,7 @@ public class MockFaceTest {
       Thread.sleep(100);
     }
   }
-  
+
   private void run(int limit) throws IOException, EncodingException, InterruptedException {
     run(limit, 1);
   }
@@ -224,6 +252,22 @@ public class MockFaceTest {
         isTimeout = true;
       }
     });
+  }
+
+  private void registerPrefix(Face face, Name prefix, OnInterestCallback onInterest, final CountDownLatch latch) throws IOException, SecurityException, EncodingException, InterruptedException {
+    face.registerPrefix(prefix, onInterest, new OnRegisterFailed() {
+      @Override
+      public void onRegisterFailed(Name prefix) {
+        fail("Registration must succeed");
+      }
+    }, new OnRegisterSuccess() {
+      @Override
+      public void onRegisterSuccess(Name prefix, long registeredPrefixId) {
+        latch.countDown();
+      }
+    });
+
+    run(3);
   }
 
   /////////////////////////////////////////////////////////////////////////////
